@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision.datasets.cifar import CIFAR10, CIFAR100
 from torchvision.datasets.stl10 import STL10
+from torchvision.datasets import FashionMNIST, MNIST
 from tqdm import tqdm
 
 from experiment.simclr import utils
@@ -69,6 +70,10 @@ def select_dataset(dataset_name):
         return CIFAR100
     if dataset_name == 'stl10':
         return STL10
+    if dataset_name == 'fmnist':
+        return FashionMNIST
+    if dataset_name == 'mnist':
+        return MNIST
     raise ValueError("Invalid dataset name")
 
 
@@ -83,10 +88,18 @@ def run_test():
     args = parser.parse_args()
     model_path, batch_size, epochs = args.model_path, args.batch_size, args.epochs
     dataset_class = select_dataset(args.dataset)
-    train_data = dataset_class(root='data', train=True, transform=utils.train_transform, download=True)
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
-    test_data = dataset_class(root='data', train=False, transform=utils.test_transform, download=True)
-    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+
+    print(args.dataset)
+    if args.dataset == 'MNIST' or args.dataset == 'FMNIST':
+        train_data = dataset_class(root='data', train=True, transform=utils.mnist_train_transform, download=True)
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
+        test_data = dataset_class(root='data', train=False, transform=utils.mnist_test_transform, download=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    else:
+        train_data = dataset_class(root='data', train=True, transform=utils.train_transform, download=True)
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
+        test_data = dataset_class(root='data', train=False, transform=utils.test_transform, download=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
 
     model = Net(num_class=len(train_data.classes), pretrained_path=model_path).cuda()
     for param in model.f.parameters():
@@ -110,7 +123,7 @@ def run_test():
         # save statistics
         data_frame = pd.DataFrame(data=results, index=range(1, epoch + 1))
         output_name = os.path.splitext(os.path.split(args.model_path)[1])[0]
-        data_frame.to_csv(f'results/{output_name}_linear_statistics.csv', index_label='epoch')
+        data_frame.to_csv(f'results/checkpoints/{output_name}_linear_statistics.csv', index_label='epoch')
         if test_acc_1 > best_acc:
             best_acc = test_acc_1
-            torch.save(model.state_dict(), f'results/{output_name}_linear_model.pth')
+            torch.save(model.state_dict(), f'results/checkpoints/{output_name}_linear_model.pth')

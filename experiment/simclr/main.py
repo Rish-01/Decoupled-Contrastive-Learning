@@ -5,8 +5,11 @@ import pandas as pd
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, dataset
+from torch.utils.data import ConcatDataset
 from torchvision.datasets.cifar import CIFAR10, CIFAR100
 from torchvision.datasets.stl10 import STL10
+from torchvision.datasets import FashionMNIST, MNIST
+
 from tqdm import tqdm
 
 from experiment.simclr import utils
@@ -109,6 +112,10 @@ def select_dataset(dataset_name):
         return utils.create_pair_dataset(CIFAR100)
     if dataset_name == 'stl10':
         return utils.create_pair_dataset(STL10)
+    if dataset_name == 'fmnist':
+        return utils.create_pair_dataset(FashionMNIST)
+    if dataset_name == 'mnist':
+        return utils.create_pair_dataset(MNIST)
     raise ValueError("Invalid dataset name")
 
 
@@ -120,7 +127,7 @@ def run_train():
     parser.add_argument('--batch_size', default=512, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=500, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--loss', default='ce', type=str, help='loss function')
-    parser.add_argument('--dataset', default='cifar10', type=str, help='dataset name: cifar10, cifar100, stl10')
+    parser.add_argument('--dataset', default='cifar10', type=str, help='dataset name: cifar10, cifar100, stl10, fmnist')
 
     # args parse
     args = parser.parse_args()
@@ -129,34 +136,53 @@ def run_train():
 
     # data prepare
     dataset_class = select_dataset(args.dataset)
-    train_data = dataset_class(root='data', train=True, transform=utils.train_transform, download=True)
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True,
-                              drop_last=True)
-    memory_data = dataset_class(root='data', train=True, transform=utils.test_transform, download=True)
-    memory_loader = DataLoader(memory_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-    test_data = dataset_class(root='data', train=False, transform=utils.test_transform, download=True)
-    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+
+    if args.dataset == 'MNIST' or args.dataset == 'FMNIST':
+        train_data = dataset_class(root='./data', train=True, transform=utils.mnist_train_transform, download=True)
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
+        memory_data = dataset_class(root='./data', train=True, transform=utils.mnist_test_transform, download=True)
+        memory_loader = DataLoader(memory_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+        test_data = dataset_class(root='./data', train=False, transform=utils.mnist_test_transform, download=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+
+        concat_dataset = ConcatDataset([train_data, test_data])
+        concat_loader = DataLoader(concat_dataset, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
+
+
+    else:
+        train_data = dataset_class(root='./data', train=True, transform=utils.train_transform, download=True)
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True, drop_last=True)
+        memory_data = dataset_class(root='./data', train=True, transform=utils.test_transform, download=True)
+        memory_loader = DataLoader(memory_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+        test_data = dataset_class(root='./data', train=False, transform=utils.test_transform, download=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+
+
+        concat_dataset = ConcatDataset([train_data, test_data])
+        concat_loader = DataLoader(concat_dataset, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
 
     # model setup and optimizer config
     model = Model(feature_dim).cuda()
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-6)
+    # optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-6)
+    optimizer = optim.SGD(model.parameters(), lr=0.03 * batch_size/256)
     args.c = len(memory_data.classes)
 
     # training loop
     results = {'train_loss': [], 'test_acc@1': [], 'test_acc@5': []}
-    save_name_pre = '{}_{}_{}_{}_{}_{}'.format(feature_dim, temperature, k, batch_size, epochs, args.loss)
+    save_name_pre = '{}_{}_{}_{}_{}_{}_{}'.format(args.dataset, feature_dim, temperature, k, batch_size, epochs, args.loss)
     if not os.path.exists('results'):
         os.mkdir('results')
+
     best_acc = 0.0
     for epoch in range(1, epochs + 1):
-        train_loss = train(model, train_loader, optimizer, args, epoch)
+        train_loss = train(model, concat_loader, optimizer, args, epoch)
         results['train_loss'].append(train_loss)
         test_acc_1, test_acc_5 = test(model, memory_loader, test_loader, args, epoch)
         results['test_acc@1'].append(test_acc_1)
         results['test_acc@5'].append(test_acc_5)
         # save statistics
         data_frame = pd.DataFrame(data=results, index=range(1, epoch + 1))
-        data_frame.to_csv('results/{}_statistics.csv'.format(save_name_pre), index_label='epoch')
+        data_frame.to_csv('results/checkpoints/{}_statistics.csv'.format(save_name_pre), index_label='epoch')
         if test_acc_1 > best_acc:
             best_acc = test_acc_1
-            torch.save(model.state_dict(), 'results/{}_model.pth'.format(save_name_pre))
+            torch.save(model.state_dict(), 'results/checkpoints/{}_model.pth'.format(save_name_pre))
