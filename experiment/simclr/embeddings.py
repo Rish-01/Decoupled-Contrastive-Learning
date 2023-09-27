@@ -2,6 +2,7 @@ from tqdm import tqdm
 import torch
 from torch import nn
 import argparse
+import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
@@ -83,9 +84,11 @@ def save_tsne_plot():
         model.eval()
         images = images.to(device)
         
+        # Run inference by forward propagating through the encoder
         with torch.no_grad():
             encoder_embeddings = model(images)
 
+        # Calculate TSNE embeddings
         tsne = TSNE(n_components=2, random_state=42)
         encoder_embeddings = encoder_embeddings.cpu()
         tsne_embeddings = tsne.fit_transform(encoder_embeddings)
@@ -99,6 +102,7 @@ def save_tsne_plot():
         encoder_embeddings_appended = torch.cat((encoder_embeddings, labels), dim=-1)
         embeddings_accumulated.append(encoder_embeddings_appended)
 
+        # Accumulate tsne embeddings over all batches of shape(batch-size, 2 + 1)
         tsne_embeddings_tensor = torch.tensor(tsne_embeddings)
         tsne_embeddings_tensor = torch.cat((tsne_embeddings_tensor, labels), dim=-1)
         embeddings_tsne_accumulated.append(tsne_embeddings_tensor)
@@ -106,14 +110,18 @@ def save_tsne_plot():
     embeddings_accumulated = torch.stack(embeddings_accumulated)
     embeddings_accumulated = embeddings_accumulated.reshape(-1, embeddings_accumulated.shape[-1])
     embeddings_tsne_accumulated = torch.stack(embeddings_tsne_accumulated)
-    embeddings_tsne_accumulated.reshape(-1, embeddings_tsne_accumulated.shape[-1])
+    embeddings_tsne_accumulated = embeddings_tsne_accumulated.reshape(-1, embeddings_tsne_accumulated.shape[-1])
     
     # Save TSNE plot
     fig.savefig(f'../../results/tsne_plots/tsne_{args.dataset}_{args.loss}.png')
-    torch.save(embeddings_accumulated, f'../../results/embeddings/embeddings_{args.dataset}_{args.loss}.pt')
-    torch.save(embeddings_tsne_accumulated, f'../../results/embeddings_tsne/embeddings_tsne_{args.dataset}_{args.loss}.pt')
+    # torch.save(embeddings_accumulated, f'../../results/embeddings/embeddings_{args.dataset}_{args.loss}.pt')
+    # torch.save(embeddings_tsne_accumulated, f'../../results/embeddings_tsne/embeddings_tsne_{args.dataset}_{args.loss}.pt')
 
-    embeddings = torch.load('../../results/embeddings/embeddings_CIFAR10_dcl.pt')
+    # Save embeddings matrices as an npy file
+    np.save(f'../../results/embeddings/embeddings_{args.dataset}_{args.loss}.npy', embeddings_accumulated.numpy())
+    np.save(f'../../results/embeddings_tsne/embeddings_{args.dataset}_{args.loss}.npy', embeddings_tsne_accumulated.numpy())
+
+    embeddings = np.load('../../results/embeddings_tsne/embeddings_CIFAR10_dclw.npy')
     print(embeddings.shape)
 
 
